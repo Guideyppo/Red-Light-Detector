@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>🚦 Traffic Light Detector KMUTNB</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      margin: 0; padding: 0;
+      min-height: 100vh;
+      display: flex; flex-direction: column; align-items: center;
+      background-image: url('https://upload.wikimedia.org/wikipedia/commons/1/1c/KMUTNB_campus.jpg');
+      background-size: cover; background-position: center; background-attachment: fixed;
+    }
+    h1 { margin-top: 20px; color: #fff; text-shadow: 2px 2px 5px #000; }
+    .card {
+      background: rgba(255, 255, 255, 0.9);
+      border-radius: 16px; padding: 20px; margin: 20px;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+      text-align: center; width: 90%; max-width: 650px;
+    }
+    input[type="file"] { display: none; }
+    label {
+      background: linear-gradient(45deg, #4CAF50, #81C784);
+      color: white; padding: 12px 24px; border-radius: 30px;
+      cursor: pointer; font-size: 16px; font-weight: bold;
+      display: inline-block; transition: 0.3s;
+    }
+    label:hover { opacity: 0.85; }
+    .image-container { position: relative; display: inline-block; margin-top: 20px; }
+    canvas { position: absolute; top: 0; left: 0; }
+    #result { margin-top: 15px; font-size: 18px; font-weight: bold; color: #333; }
+  </style>
+</head>
+<body>
+  <h1>🚦 Traffic Light Detector KMUTNB</h1>
+  <div class="card">
+    <label for="file-upload">📤 Upload Image</label>
+    <input id="file-upload" type="file" accept="image/*">
+    <div class="image-container" id="image-container">
+      <img id="uploaded-img" style="max-width:100%; border-radius:12px;" />
+      <canvas id="canvas"></canvas>
+    </div>
+    <p id="result">Please upload an image...</p>
+  </div>
+
+  <script>
+    const fileInput = document.getElementById('file-upload');
+    const uploadedImg = document.getElementById('uploaded-img');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const resultText = document.getElementById('result');
+
+    function rgbToHsv(r,g,b){
+      r/=255; g/=255; b/=255;
+      let max=Math.max(r,g,b), min=Math.min(r,g,b);
+      let h,s,v=max;
+      let d=max-min;
+      s=max===0?0:d/max;
+      if(d===0) h=0;
+      else if(max===r) h=60*((g-b)/d %6);
+      else if(max===g) h=60*((b-r)/d +2);
+      else h=60*((r-g)/d +4);
+      if(h<0) h+=360;
+      return [h,s,v];
+    }
+
+    function detectLightColor(crop){
+      const smallSize = 50;
+      const tempCanvas = document.createElement("canvas");
+      tempCanvas.width = smallSize;
+      tempCanvas.height = smallSize;
+      const tctx = tempCanvas.getContext("2d");
+      tctx.drawImage(crop, 0, 0, smallSize, smallSize);
+      const data = tctx.getImageData(0, 0, smallSize, smallSize).data;
+
+      const colorCounts={Red:0,Yellow:0,Green:0};
+
+      for(let i=0;i<data.length;i+=4){
+        const r=data[i], g=data[i+1], b=data[i+2];
+        const [h,s,v]=rgbToHsv(r,g,b);
+        if(v<0.2 || s<0.3) continue;
+
+        if((h>=0 && h<=20) || (h>=340 && h<=360)) colorCounts.Red++;
+        else if(h>=25 && h<=55) colorCounts.Yellow++;
+        else if(h>=60 && h<=150) colorCounts.Green++;
+      }
+
+      let chosenColor="None";
+      let maxCount=0;
+      for(const [color,count] of Object.entries(colorCounts)){
+        if(count>maxCount){ chosenColor=color; maxCount=count; }
+      }
+
+      return chosenColor;
+    }
+
+    let model;
+    async function loadModel(){
+      resultText.innerText = "Loading EfficientDet model...";
+      model = await tf.loadGraphModel("https://tfhub.dev/tensorflow/efficientdet/d0/1", {fromTFHub: true});
+      resultText.innerText = "EfficientDet loaded ✅ Please upload an image.";
+      console.log("EfficientDet loaded ✅");
+    }
+    loadModel();
+
+    fileInput.addEventListener('change', async (e)=>{
+      const file=e.target.files[0];
+      if(!file) return;
+
+      const reader=new FileReader();
+      reader.onload=function(ev){
+        uploadedImg.src = ev.target.result;
+        uploadedImg.onload = async function(){
+          canvas.width = uploadedImg.width;
+          canvas.height = uploadedImg.height;
+          ctx.clearRect(0,0,canvas.width,canvas.height);
+
+          const tfImg = tf.browser.fromPixels(uploadedImg).toInt().expandDims(0);
+          const predictions = await model.executeAsync(tfImg);
+          tfImg.dispose();
+
+          let found=false;
+
+          predictions[0].arraySync().forEach((box, i) => {
+            const [ymin, xmin, ymax, xmax] = box;
+            const score = predictions[1].arraySync()[i];
+            const classId = predictions[2].arraySync()[i];
+            if(score > 0.3 && classId === 10) {
+              found=true;
+              const [x, y, w, h] = [xmin * uploadedImg.width, ymin * uploadedImg.height, (xmax - xmin) * uploadedImg.width, (ymax - ymin) * uploadedImg.height];
+              const cropCanvas=document.createElement("canvas");
+              cropCanvas.width=w; cropCanvas.height=h;
+              cropCanvas.getContext("2d").drawImage(uploadedImg,x,y,w,h,0,0,w,h);
+
+              const lightColor = detectLightColor(cropCanvas);
+
+              ctx.strokeStyle="blue";
+              ctx.lineWidth=3;
+              ctx.strokeRect(x,y,w,h);
+              ctx.fillStyle="blue";
+              ctx.font="16px Arial";
+              ctx.fillText(lightColor, x, y>20?y-5:y+15);
+
+              resultText.innerText = `Detected: ${lightColor} light 🚦`;
+            }
+          });
+
+          if(!found) resultText.innerText="No traffic light detected ❌";
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+  </script>
+</body>
+</html>
