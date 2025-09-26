@@ -1,2 +1,2 @@
-# Red-Light-Detector-Kmutnb
-Create by IEE KMUTNB
+# Red-Light-Detector
+Create by IEE 
